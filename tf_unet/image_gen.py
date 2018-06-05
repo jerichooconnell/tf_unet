@@ -20,6 +20,10 @@ author: jakeret
 from __future__ import print_function, division, absolute_import, unicode_literals
 
 import numpy as np
+import random
+import math
+import pickle
+import os
 
 sigma = 10
 
@@ -28,6 +32,101 @@ plateau_max = 2
 
 r_min = 1
 r_max = 200
+
+def generate_voronoi_diagram(width, height, cnt=50):
+    
+    num_cells = cnt
+    
+    script_dir = os.path.dirname(__file__) #<-- absolute dir the script is in
+    rel_path = 'Attenuation.pkl'
+    abs_file_path = os.path.join(script_dir, rel_path)
+    # This is the part that imports the spectra file
+    with open(abs_file_path,'rb') as f:  # Python 3: open(..., 'rb')
+        Attenuation, Attenuation2, Spec = pickle.load(f)
+        
+    Ev = Spec[:,0]
+    Int = Spec[:,1]
+
+    image = np.ones((width,height,1))
+    image2 = np.zeros([width,height,1])
+    labels = np.zeros([width,height],dtype=np.bool)
+    imgx, imgy = width, height
+    nx = [] # hold the x value
+    ny = [] # holds the y value
+    nr = [] # low energy image
+    nr2 = [] # high energy image
+    label = [] # labels whether or not the cell has cartilage
+
+    total_intensity_low = sum(Int[30:48]) # the original intensities
+    total_intensity_high = sum(Int[70:])
+
+    for i in range(num_cells):
+
+        # choosing random place for the cell
+        nx.append(random.randrange(imgx))
+        ny.append(random.randrange(imgy))
+        rr = random.random()
+        pp = random.random()
+
+        # making a random value for the cartilage
+        if i%4==0:
+            t_cart = random.uniform(0.5,5)
+            label.append(0)
+        else:
+            label.append(1)
+            t_cart = 0.
+
+        # Making a random value for the muscle
+        t_muscle = 10 - t_cart
+
+        # Attenuating
+        pixel_value = 0.
+
+        # finding the attenuation for the low image
+        for ii,energy in enumerate(Ev[30:48]):
+
+            mu = np.interp(energy/1000.,Attenuation[:,0],Attenuation[:,7])
+            mu2 = np.interp(energy/1000.,Attenuation2[:,0],Attenuation2[:,7])
+
+            pixel_value += Int[ii+30]*np.exp(-mu*t_muscle*1.05)*np.exp(-mu2*t_cart*1.1)
+
+        nr.append(pixel_value)
+
+        pixel_value = 0.
+
+        # finding the attenuation for the high image
+        for ii,energy in enumerate(Ev[70:]):
+
+            mu = np.interp(energy/1000,Attenuation[:,0],Attenuation[:,7])
+            mu2 = np.interp(energy/1000,Attenuation2[:,0],Attenuation2[:,7])
+
+            pixel_value += Int[ii+70]*np.exp(-mu*t_muscle*1.05)*np.exp(-mu2*t_cart*1.1)
+
+        nr2.append(pixel_value)
+
+
+    for y in range(imgy):
+        for x in range(imgx):
+            dmin = math.hypot(imgx-1, imgy-1)
+            j = -1
+            for i in range(num_cells):
+                d = math.hypot(nx[i]-x, ny[i]-y)
+                if d < dmin:
+                    dmin = d
+                    j = i
+
+            # Generating some poisson noise\
+            
+            image[x,y,0] = random.gauss(nr[j],(nr[j])**(0.5))#/(total_intensity_low)
+            image2[x,y,0] = random.gauss(nr2[j],(nr2[j])**(0.5))#/(total_intensity_high)
+            
+            image[x,y,0] = image[x,y,0]/image2[x,y,0]
+            labels[x,y] = label[j]
+            
+    image -= np.amin(image)
+    image /= np.amax(image)
+    
+    return image, labels
 
 def create_image_and_label(nx,ny, cnt = 10):
     r_min = 5
@@ -57,14 +156,17 @@ def create_image_and_label(nx,ny, cnt = 10):
     
     return image, label
 
+
+
 def get_image_gen(nx, ny, **kwargs):
     def create_batch(n_image):
         
-        X = np.zeros((n_image,nx,ny, 1))
+        X = np.zeros((n_image,nx,ny,1))
         Y = np.zeros((n_image,nx,ny,2))
         
         for i in range(n_image):
-            X[i],Y[i,:,:,1] = create_image_and_label(nx,ny, **kwargs)
+            #X[i],Y[i,:,:,1] = create_image_and_label(nx,ny, **kwargs)
+            X[i],Y[i,:,:,1] = generate_voronoi_diagram(nx,ny, **kwargs)
             Y[i,:,:,0] = 1-Y[i,:,:,1]
             
         return X,Y
