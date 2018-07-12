@@ -1,0 +1,9 @@
+figure
+subplot(221)
+imagesc(image(:,:,1))
+subplot(222)
+imagesc(image(:,:,2))
+subplot(223)
+imagesc(image(:,:,3))
+subplot(224)
+imagesc(image(:,:,4))
