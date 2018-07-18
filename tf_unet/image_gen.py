@@ -47,8 +47,8 @@ def generate_voronoi_diagram(width, height, cnt=50):
     imgx, imgy = width, height
     nx = []  # hold the x value
     ny = []  # holds the y value
-    nr = np.zeros([nbins, cnt])  # low energy image
-    nr2 = []  # high energy image
+    nr = np.zeros([nbins, int(cnt / 2)])  # low energy image
+    nr2 = np.zeros([nbins, int(cnt / 2)])  # high energy image
     label = []  # labels whether or not the cell has cartilage
 
     target_SNR = 100
@@ -59,45 +59,72 @@ def generate_voronoi_diagram(width, height, cnt=50):
     # Finding the signal strength that would give the correct poisson noise
     correct_signal = (signal / sigma)**2.
 
-    D = loadmat("/home/jericho/Downloads/bin/pcd_planar_imaging/DES_radiography/DES_3.0/Y_ML_val.mat")
+    D = loadmat(
+        "/home/jericho/Downloads/bin/pcd_planar_imaging/DES_radiography/DES_3.0/Y_ML_val.mat"
+    )
 
-    cal_values = D["Y_ML_val"][:,1:]
+    cal_values = D["Y_ML_val"][:, 1:]
 
-    for i in range(num_cells):
+    inds_0 = np.where(cal_values[0, :] == 0)[0]
+    inds_1 = np.where(cal_values[0, :] != 0)[0]
+
+    for i in range(int(num_cells / 2)):
 
         # choosing random place for the cell
         nx.append(random.randrange(imgx))
         ny.append(random.randrange(imgy))
-        rr = random.randint(0, len(cal_values) - 1)
         pp = random.randint(0, len(cal_values[cal_values == 0.]) - 1)
 
-        inds_0 = np.where(cal_values[0,:] == 0)[0]
         # making a random value for the cartilage
-        if i % 2 == 0:
-            nr[:, i] = cal_values[1:5, rr]
-            label.append(1)
-        else:
-            nr[:, i] = cal_values[1:5, inds_0[pp]]
-            label.append(0)
+        #     if i % 2 == 0:
+        #         nr[:, i] = cal_values[1:5, rr]
+        #         label.append(1)
+        #     else:
+        nr[:, i] = cal_values[1:5, inds_0[pp]]
+        label.append(0)
 
     for y in range(imgy):
         for x in range(imgx):
             dmin = math.hypot(imgx - 1, imgy - 1)
             j = -1
-            for i in range(num_cells):
+            for i in range(int(num_cells / 2)):
                 d = math.hypot(nx[i] - x, ny[i] - y)
                 if d < dmin:
                     dmin = d
                     j = i
 
             # Generating some poisson noise\
-            for kk in range(nbins):
-                image[x, y,
-                       kk] = np.log((np.exp(nr[kk,j])) + np.random.normal(0,np.sqrt(np.exp(nr[kk,j])*2500))/2500)
-                if np.isnan(image[x,y,kk]):
-                    image[x,y,kk] = nr[kk,j]
+            #for kk in range(nbins):
+            image[x, y, :] = np.nan_to_num(np.log(
+                (np.exp(nr[:, j])) +
+                np.random.normal(0, np.sqrt(np.exp(nr[:, j]) * 2500)) / 2500))
 
-            labels[x, y] = label[j]
+    labels[x, y] = label[j]
+
+    r_min = 3
+    r_max = 15
+    border = 10
+    sigma = 10
+
+    #image = np.ones((nx, ny, 1))
+    label = np.ones((width, height))
+    mask = np.zeros([width, height], dtype=np.bool)
+    for i in range(int(num_cells / 2)):
+        a = np.random.randint(border, width - border)
+        b = np.random.randint(border, height - border)
+        r = np.random.randint(r_min, r_max)
+        rr = random.randint(0, len(inds_1) - 1)
+        nr2[:, i] = cal_values[1:5, inds_1[rr]]
+
+        y, x = np.ogrid[-a:width - a, -b:height - b]
+        m = x * x + y * y <= r * r
+        mask = np.logical_or(mask, m)
+
+        image[m] = np.nan_to_num(
+            np.log((np.exp(nr2[:, i])) + np.random.normal(
+                0, np.sqrt(np.exp(nr2[:, i]) * 2500), size=image.shape)[m] / 2500))
+
+    labels[mask] = 1
 
     matlab_reshape = np.reshape(image,[image.size],order='F').copy()
     matlab_reshape = list(np.squeeze(matlab_reshape)).copy()
@@ -106,10 +133,13 @@ def generate_voronoi_diagram(width, height, cnt=50):
     eng = matlab.engine.start_matlab()
     ys = eng.net_val(matlab_reshape)
     
-    im_cart = np.zeros((width,height,1))
-    im_cart[:,:,0] = np.reshape(ys,[width,height],order='F').copy()
+    image = np.zeros((width,height,1))
+    image[:,:,0] = np.reshape(ys,[width,height],order='F').copy()
     
-    return im_cart, labels
+    image -= np.amin(image)
+    image /= np.amax(image)
+    
+    return image, labels
 
 def create_image_and_label(nx,ny, cnt = 10):
     r_min = 5
