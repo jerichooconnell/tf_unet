@@ -141,6 +141,110 @@ def generate_voronoi_diagram(width, height, cnt=50):
     
     return image, labels
 
+
+def generate_voronoi_diagram_val(width, height, cnt = 10, r = 2, rr = 5):
+
+    num_cells = cnt
+
+    nbins = 4
+    image = np.zeros((width, height, nbins))
+    labels = np.zeros([width, height], dtype=np.bool)
+
+    imgx, imgy = width, height
+    nx = []  # hold the x value
+    ny = []  # holds the y value
+    nr = np.zeros([nbins, 5])  # low energy image
+    nr2 = np.zeros([nbins, cnt])  # high energy image
+    label = []  # labels whether or not the cell has cartilage
+
+    target_SNR = 100
+    # Finding the singnal in water that will be the basis for the noise
+    signal = 3.1109 * 10**3
+    # Finding the target noise
+    sigma = signal / target_SNR
+    # Finding the signal strength that would give the correct poisson noise
+    correct_signal = (signal / sigma)**2.
+
+    D = loadmat(
+        "/home/jericho/Downloads/bin/pcd_planar_imaging/DES_radiography/DES_3.0/Y_ML_val.mat"
+    )
+
+    cal_values = D["Y_ML_val"][:, 1:]
+
+    inds_0 = np.where(cal_values[0, :] == 0)[0]
+    inds_1 = np.where(cal_values[0, :] != 0)[0]
+
+    for i in range(5):
+
+        # choosing random place for the cell
+        nx.append(random.randrange(imgx))
+        ny.append(random.randrange(imgy))
+        pp = random.randint(0, len(cal_values[cal_values == 0.]) - 1)
+
+        # making a random value for the cartilage
+        #     if i % 2 == 0:
+        #         nr[:, i] = cal_values[1:5, rr]
+        #         label.append(1)
+        #     else:
+        nr[:, i] = cal_values[1:5, inds_0[3]]
+        label.append(0)
+
+    for y in range(imgy):
+        for x in range(imgx):
+            dmin = math.hypot(imgx - 1, imgy - 1)
+            j = -1
+            for i in range(int(5)):
+                d = math.hypot(nx[i] - x, ny[i] - y)
+                if d < dmin:
+                    dmin = d
+                    j = i
+
+            # Generating some poisson noise\
+            #for kk in range(nbins):
+            image[x, y, :] = np.nan_to_num(np.log(
+                (np.exp(nr[:, j])) +
+                np.random.normal(0, np.sqrt(np.exp(nr[:, j]) * 2500)) / 2500))
+
+    labels[x, y] = label[j]
+
+    r_min = 3
+    r_max = 50
+    border = 50
+    sigma = 10
+
+    #image = np.ones((nx, ny, 1))
+    label = np.ones((width, height))
+    mask = np.zeros([width, height], dtype=np.bool)
+    for i in range(num_cells):
+        a = np.random.randint(border, width - border)
+        b = np.random.randint(border, height - border)
+        nr2[:, i] = cal_values[1:5, inds_1[rr]]
+
+        y, x = np.ogrid[-a:width - a, -b:height - b]
+        m = x * x + y * y <= r * r
+        mask = np.logical_or(mask, m)
+
+        image[m] = np.nan_to_num(
+            np.log((np.exp(nr2[:, i])) + np.random.normal(
+                0, np.sqrt(np.exp(nr2[:, i]) * 2500), size=image.shape)[m] / 2500))
+
+    labels[mask] = 1
+
+    matlab_reshape = np.reshape(image,[image.size],order='F').copy()
+    matlab_reshape = list(np.squeeze(matlab_reshape)).copy()
+    matlab_reshape = matlab.double(matlab_reshape)
+
+    eng = matlab.engine.start_matlab()
+    ys = eng.net_val(matlab_reshape)
+    
+    image = np.zeros((width,height,1))
+    image[:,:,0] = np.reshape(ys,[width,height],order='F').copy()
+    
+    image -= np.amin(image)
+    image /= np.amax(image)
+    
+    return image, labels
+
 def create_image_and_label(nx,ny, cnt = 10):
     r_min = 5
     r_max = 50
@@ -180,6 +284,23 @@ def get_image_gen(nx, ny, **kwargs):
         for i in range(n_image):
             #X[i],Y[i,:,:,1] = create_image_and_label(nx,ny, **kwargs)
             X[i],Y[i,:,:,1] = generate_voronoi_diagram(nx,ny, **kwargs)
+            Y[i,:,:,0] = 1-Y[i,:,:,1]
+            
+        return X,Y
+    
+    create_batch.channels = 1
+    create_batch.n_class = 2
+    return create_batch
+
+def get_image_gen_val(nx, ny, **kwargs):
+    def create_batch(n_image):
+        
+        X = np.zeros((n_image,nx,ny,1))
+        Y = np.zeros((n_image,nx,ny,2))
+        
+        for i in range(n_image):
+            #X[i],Y[i,:,:,1] = create_image_and_label(nx,ny, **kwargs)
+            X[i],Y[i,:,:,1] = generate_voronoi_diagram_val(nx,ny, **kwargs)
             Y[i,:,:,0] = 1-Y[i,:,:,1]
             
         return X,Y

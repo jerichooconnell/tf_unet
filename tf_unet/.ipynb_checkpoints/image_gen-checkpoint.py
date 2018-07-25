@@ -25,6 +25,9 @@ import math
 import pickle
 import os
 
+import matlab.engine
+from scipy.io import loadmat
+
 sigma = 10
 
 plateau_min = -2
@@ -34,95 +37,209 @@ r_min = 1
 r_max = 200
 
 def generate_voronoi_diagram(width, height, cnt=50):
-    
+
     num_cells = cnt
-    
-    script_dir = os.path.dirname(__file__) #<-- absolute dir the script is in
-    rel_path = 'Attenuation.pkl'
-    abs_file_path = os.path.join(script_dir, rel_path)
-    # This is the part that imports the spectra file
-    with open(abs_file_path,'rb') as f:  # Python 3: open(..., 'rb')
-        Attenuation, Attenuation2, Spec = pickle.load(f)
-        
-    Ev = Spec[:,0]
-    Int = Spec[:,1]
 
-    image = np.ones((width,height,1))
-    image2 = np.zeros([width,height,1])
-    labels = np.zeros([width,height],dtype=np.bool)
+    nbins = 4
+    image = np.zeros((width, height, nbins))
+    labels = np.zeros([width, height], dtype=np.bool)
+
     imgx, imgy = width, height
-    nx = [] # hold the x value
-    ny = [] # holds the y value
-    nr = [] # low energy image
-    nr2 = [] # high energy image
-    label = [] # labels whether or not the cell has cartilage
+    nx = []  # hold the x value
+    ny = []  # holds the y value
+    nr = np.zeros([nbins, int(cnt / 2) - 20])  # low energy image
+    nr2 = np.zeros([nbins, int(cnt / 2)])  # high energy image
+    label = []  # labels whether or not the cell has cartilage
 
-    total_intensity_low = sum(Int[30:48]) # the original intensities
-    total_intensity_high = sum(Int[70:])
+    target_SNR = 100
+    # Finding the singnal in water that will be the basis for the noise
+    signal = 3.1109 * 10**3
+    # Finding the target noise
+    sigma = signal / target_SNR
+    # Finding the signal strength that would give the correct poisson noise
+    correct_signal = (signal / sigma)**2.
 
-    for i in range(num_cells):
+    D = loadmat(
+        "/home/jericho/Downloads/bin/pcd_planar_imaging/DES_radiography/DES_3.0/Y_ML_val.mat"
+    )
+
+    cal_values = D["Y_ML_val"][:, 1:]
+
+    inds_0 = np.where(cal_values[0, :] == 0)[0]
+    inds_1 = np.where(cal_values[0, :] != 0)[0]
+
+    for i in range(int(num_cells / 2 - 20)):
 
         # choosing random place for the cell
         nx.append(random.randrange(imgx))
         ny.append(random.randrange(imgy))
-        rr = random.random()
-        pp = random.random()
+        pp = random.randint(0, len(cal_values[cal_values == 0.]) - 1)
 
         # making a random value for the cartilage
-        if i%4==0:
-            t_cart = random.uniform(0.5,5)
-            label.append(0)
-        else:
-            label.append(1)
-            t_cart = 0.
-
-        # Making a random value for the muscle
-        t_muscle = 10 - t_cart
-
-        # Attenuating
-        pixel_value = 0.
-
-        # finding the attenuation for the low image
-        for ii,energy in enumerate(Ev[30:48]):
-
-            mu = np.interp(energy/1000.,Attenuation[:,0],Attenuation[:,7])
-            mu2 = np.interp(energy/1000.,Attenuation2[:,0],Attenuation2[:,7])
-
-            pixel_value += Int[ii+30]*np.exp(-mu*t_muscle*1.05)*np.exp(-mu2*t_cart*1.1)
-
-        nr.append(pixel_value)
-
-        pixel_value = 0.
-
-        # finding the attenuation for the high image
-        for ii,energy in enumerate(Ev[70:]):
-
-            mu = np.interp(energy/1000,Attenuation[:,0],Attenuation[:,7])
-            mu2 = np.interp(energy/1000,Attenuation2[:,0],Attenuation2[:,7])
-
-            pixel_value += Int[ii+70]*np.exp(-mu*t_muscle*1.05)*np.exp(-mu2*t_cart*1.1)
-
-        nr2.append(pixel_value)
-
+        #     if i % 2 == 0:
+        #         nr[:, i] = cal_values[1:5, rr]
+        #         label.append(1)
+        #     else:
+        nr[:, i] = cal_values[1:5, inds_0[pp]]
+        label.append(0)
 
     for y in range(imgy):
         for x in range(imgx):
-            dmin = math.hypot(imgx-1, imgy-1)
+            dmin = math.hypot(imgx - 1, imgy - 1)
             j = -1
-            for i in range(num_cells):
-                d = math.hypot(nx[i]-x, ny[i]-y)
+            for i in range(int(num_cells / 2 - 20)):
+                d = math.hypot(nx[i] - x, ny[i] - y)
                 if d < dmin:
                     dmin = d
                     j = i
 
             # Generating some poisson noise\
-            
-            image[x,y,0] = random.gauss(nr[j],(nr[j])**(0.5))#/(total_intensity_low)
-            image2[x,y,0] = random.gauss(nr2[j],(nr2[j])**(0.5))#/(total_intensity_high)
-            
-            image[x,y,0] = image[x,y,0]/image2[x,y,0]
-            labels[x,y] = label[j]
-            
+            #for kk in range(nbins):
+            image[x, y, :] = np.nan_to_num(np.log(
+                (np.exp(nr[:, j])) +
+                np.random.normal(0, np.sqrt(np.exp(nr[:, j]) * 2500)) / 2500))
+
+    labels[x, y] = label[j]
+
+    r_min = 3
+    r_max = 50
+    border = 10
+    sigma = 10
+
+    #image = np.ones((nx, ny, 1))
+    label = np.ones((width, height))
+    mask = np.zeros([width, height], dtype=np.bool)
+    for i in range(int(num_cells / 2)):
+        a = np.random.randint(border, width - border)
+        b = np.random.randint(border, height - border)
+        r = np.random.randint(r_min, r_max)
+        rr = random.randint(0, len(inds_1) - 1)
+        nr2[:, i] = cal_values[1:5, inds_1[rr]]
+
+        y, x = np.ogrid[-a:width - a, -b:height - b]
+        m = x * x + y * y <= r * r
+        mask = np.logical_or(mask, m)
+
+        image[m] = np.nan_to_num(
+            np.log((np.exp(nr2[:, i])) + np.random.normal(
+                0, np.sqrt(np.exp(nr2[:, i]) * 2500), size=image.shape)[m] / 2500))
+
+    labels[mask] = 1
+
+    matlab_reshape = np.reshape(image,[image.size],order='F').copy()
+    matlab_reshape = list(np.squeeze(matlab_reshape)).copy()
+    matlab_reshape = matlab.double(matlab_reshape)
+
+    eng = matlab.engine.start_matlab()
+    ys = eng.net_val(matlab_reshape)
+    
+    image = np.zeros((width,height,1))
+    image[:,:,0] = np.reshape(ys,[width,height],order='F').copy()
+    
+    image -= np.amin(image)
+    image /= np.amax(image)
+    
+    return image, labels
+
+
+def generate_voronoi_diagram_val(width, height, cnt = 10, r = 2, rr = 5):
+
+    num_cells = cnt
+
+    nbins = 4
+    image = np.zeros((width, height, nbins))
+    labels = np.zeros([width, height], dtype=np.bool)
+
+    imgx, imgy = width, height
+    nx = []  # hold the x value
+    ny = []  # holds the y value
+    nr = np.zeros([nbins, 5])  # low energy image
+    nr2 = np.zeros([nbins, cnt])  # high energy image
+    label = []  # labels whether or not the cell has cartilage
+
+    target_SNR = 100
+    # Finding the singnal in water that will be the basis for the noise
+    signal = 3.1109 * 10**3
+    # Finding the target noise
+    sigma = signal / target_SNR
+    # Finding the signal strength that would give the correct poisson noise
+    correct_signal = (signal / sigma)**2.
+
+    D = loadmat(
+        "/home/jericho/Downloads/bin/pcd_planar_imaging/DES_radiography/DES_3.0/Y_ML_val.mat"
+    )
+
+    cal_values = D["Y_ML_val"][:, 1:]
+
+    inds_0 = np.where(cal_values[0, :] == 0)[0]
+    inds_1 = np.where(cal_values[0, :] != 0)[0]
+
+    for i in range(5):
+
+        # choosing random place for the cell
+        nx.append(random.randrange(imgx))
+        ny.append(random.randrange(imgy))
+        pp = random.randint(0, len(cal_values[cal_values == 0.]) - 1)
+
+        # making a random value for the cartilage
+        #     if i % 2 == 0:
+        #         nr[:, i] = cal_values[1:5, rr]
+        #         label.append(1)
+        #     else:
+        nr[:, i] = cal_values[1:5, inds_0[3]]
+        label.append(0)
+
+    for y in range(imgy):
+        for x in range(imgx):
+            dmin = math.hypot(imgx - 1, imgy - 1)
+            j = -1
+            for i in range(int(5)):
+                d = math.hypot(nx[i] - x, ny[i] - y)
+                if d < dmin:
+                    dmin = d
+                    j = i
+
+            # Generating some poisson noise\
+            #for kk in range(nbins):
+            image[x, y, :] = np.nan_to_num(np.log(
+                (np.exp(nr[:, j])) +
+                np.random.normal(0, np.sqrt(np.exp(nr[:, j]) * 2500)) / 2500))
+
+    labels[x, y] = label[j]
+
+    r_min = 3
+    r_max = 50
+    border = 50
+    sigma = 10
+
+    #image = np.ones((nx, ny, 1))
+    label = np.ones((width, height))
+    mask = np.zeros([width, height], dtype=np.bool)
+    for i in range(num_cells):
+        a = np.random.randint(border, width - border)
+        b = np.random.randint(border, height - border)
+        nr2[:, i] = cal_values[1:5, inds_1[rr]]
+
+        y, x = np.ogrid[-a:width - a, -b:height - b]
+        m = x * x + y * y <= r * r
+        mask = np.logical_or(mask, m)
+
+        image[m] = np.nan_to_num(
+            np.log((np.exp(nr2[:, i])) + np.random.normal(
+                0, np.sqrt(np.exp(nr2[:, i]) * 2500), size=image.shape)[m] / 2500))
+
+    labels[mask] = 1
+
+    matlab_reshape = np.reshape(image,[image.size],order='F').copy()
+    matlab_reshape = list(np.squeeze(matlab_reshape)).copy()
+    matlab_reshape = matlab.double(matlab_reshape)
+
+    eng = matlab.engine.start_matlab()
+    ys = eng.net_val(matlab_reshape)
+    
+    image = np.zeros((width,height,1))
+    image[:,:,0] = np.reshape(ys,[width,height],order='F').copy()
+    
     image -= np.amin(image)
     image /= np.amax(image)
     
@@ -167,6 +284,23 @@ def get_image_gen(nx, ny, **kwargs):
         for i in range(n_image):
             #X[i],Y[i,:,:,1] = create_image_and_label(nx,ny, **kwargs)
             X[i],Y[i,:,:,1] = generate_voronoi_diagram(nx,ny, **kwargs)
+            Y[i,:,:,0] = 1-Y[i,:,:,1]
+            
+        return X,Y
+    
+    create_batch.channels = 1
+    create_batch.n_class = 2
+    return create_batch
+
+def get_image_gen_val(nx, ny, **kwargs):
+    def create_batch(n_image):
+        
+        X = np.zeros((n_image,nx,ny,1))
+        Y = np.zeros((n_image,nx,ny,2))
+        
+        for i in range(n_image):
+            #X[i],Y[i,:,:,1] = create_image_and_label(nx,ny, **kwargs)
+            X[i],Y[i,:,:,1] = generate_voronoi_diagram_val(nx,ny, **kwargs)
             Y[i,:,:,0] = 1-Y[i,:,:,1]
             
         return X,Y
