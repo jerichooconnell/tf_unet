@@ -109,7 +109,8 @@ def generate_voronoi_diagram(width, height, cnt=50):
     #image = np.ones((nx, ny, 1))
     label = np.ones((width, height))
     mask = np.zeros([width, height], dtype=np.bool)
-    for i in range(int(num_cells / 2)):
+    nr2[:, 0] = cal_values[1:5, inds_1[0]]
+    for i in range(1,int(num_cells / 2)):
         a = np.random.randint(border, width - border)
         b = np.random.randint(border, height - border)
         r = np.random.randint(r_min, r_max)
@@ -136,8 +137,8 @@ def generate_voronoi_diagram(width, height, cnt=50):
     image = np.zeros((width,height,1))
     image[:,:,0] = np.reshape(ys,[width,height],order='F').copy()
     
-    image -= np.amin(image)
-    image /= np.amax(image)
+    image -= min(np.amin(image))
+    image /= max(np.amax(image))
     
     return image, labels
 
@@ -240,8 +241,8 @@ def generate_voronoi_diagram_val(width, height, cnt = 10, r = 2, rr = 5):
     image = np.zeros((width,height,1))
     image[:,:,0] = np.reshape(ys,[width,height],order='F').copy()
     
-    image -= np.amin(image)
-    image /= np.amax(image)
+    image -= min(np.amin(image),-2.2)
+    image /= max(np.amax(image),4.8)
     
     return image, labels
 
